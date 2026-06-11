@@ -716,7 +716,7 @@
 <header>
   <div class="logo">📦</div>
   <div>
-    <h1><span class="title-glow">Packing List</span> 製作工具 <span style="font-size:10px;font-weight:600;color:var(--text-muted);background:var(--surface2);border:1px solid var(--border2);padding:2px 8px;border-radius:10px;margin-left:6px;" id="versionTag">v2.0</span></h1>
+    <h1><span class="title-glow">Packing List</span> 製作工具 <span style="font-size:10px;font-weight:600;color:var(--text-muted);background:var(--surface2);border:1px solid var(--border2);padding:2px 8px;border-radius:10px;margin-left:6px;" id="versionTag">v2.1</span></h1>
     <div class="subtitle">🚀 倉儲作業平台 ／ 匯入ERP明細 → 比對中英標 → 產出裝箱單</div>
   </div>
   <div class="xp-bar-wrap">
@@ -901,7 +901,17 @@
           <span>所有欄位完整明細，供內部存檔</span>
         </div>
       </button>
+      <button class="export-btn-card" id="gsheetBtn" onclick="saveToGoogleSheets()" style="border:1px solid rgba(52,211,153,.4);background:rgba(52,211,153,.07);">
+        <div class="px-icon" style="font-size:42px;line-height:1;">🗄️</div>
+        <div class="export-btn-card-text">
+          <strong style="color:#34d399;">☁ 儲存到 Google Sheets</strong>
+          <span>備份出貨紀錄，跨裝置查閱</span>
+        </div>
+      </button>
     </div>
+
+    <!-- Google Sheets 儲存結果提示 -->
+    <div id="gsheetResult" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:12.5px;font-weight:600;"></div>
   </div>
 
 
@@ -2102,6 +2112,82 @@ function applyPltDimFill() {
   document.getElementById('dimPltModal').classList.remove('show');
   recalcPltNoDisplay();
   toast('✓ 材積/板已套用至同 PLT NO 的合併儲存格');
+}
+
+// ── Google Sheets 備份 ──
+const GS_URL   = 'https://script.google.com/macros/s/AKfycbwphKG9qZQbzbgeLmEHNcgoFmxtmBaGIP8s0l4YZZxDsqOYvOfPlmLuR7Eyl5HUjWpY/exec';
+const GS_TOKEN = 'PL-Brown0516-xK9mQw3nZ7';
+
+async function saveToGoogleSheets() {
+  const rows = collectRows();
+  if (!rows.length) { toast('尚無資料可儲存', 'err'); return; }
+
+  const btn = $('gsheetBtn');
+  const result = $('gsheetResult');
+  btn.disabled = true;
+  btn.querySelector('strong').textContent = '⏳ 儲存中...';
+
+  // 計算總計
+  const totalNet   = rows.reduce((s, r) => s + (r.totalNet   || 0), 0);
+  const totalGross = rows.reduce((s, r) => s + (r.totalGross || 0), 0);
+  const totalQty   = rows.reduce((s, r) => s + (parseFloat(r.qty) || 0), 0);
+
+  const payload = {
+    token:      GS_TOKEN,
+    orderNo:    orderInfo.orderNo  || '',
+    date:       orderInfo.date     || '',
+    invNo:      ($('fInvNo')  ? $('fInvNo').value  : '') || '',
+    consignee:  ($('fConsigneeName') ? $('fConsigneeName').value : '') || '',
+    pol:        ($('fPOL')    ? $('fPOL').value    : '') || '',
+    pod:        ($('fPOD')    ? $('fPOD').value    : '') || '',
+    vessel:     ($('fVessel') ? $('fVessel').value : '') || '',
+    totalItems: rows.length,
+    totalQty:   totalQty,
+    totalNet:   parseFloat(totalNet.toFixed(3)),
+    totalGross: parseFloat(totalGross.toFixed(3)),
+    rows:       rows.map(r => ({
+      pltNo:   r.pltNo,
+      boxNo:   r.boxNo,
+      partNo:  r.partNo,
+      nameCN:  r.nameCN,
+      enName:  r.enName,
+      serialNo:r.serialNo,
+      qty:     r.qty,
+      unit:    r.unit,
+      netWt:   r.netWt,
+      grossWt: r.grossWt,
+      dim:     r.dim,
+      totalNet:   r.totalNet,
+      totalGross: r.totalGross,
+      pltGross:   r.pltGross,
+    }))
+  };
+
+  try {
+    const resp = await fetch(GS_URL, {
+      method: 'POST',
+      mode:   'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body:   JSON.stringify(payload)
+    });
+    // no-cors 模式拿不到回應內容，只要不拋錯就視為成功
+    result.style.display  = 'block';
+    result.style.background = 'rgba(52,211,153,.12)';
+    result.style.border   = '1px solid rgba(52,211,153,.4)';
+    result.style.color    = '#34d399';
+    result.innerHTML = `✅ 已儲存到 Google Sheets！訂單：<b>${orderInfo.orderNo||'—'}</b>，共 ${rows.length} 筆，時間：${new Date().toLocaleString('zh-TW')}`;
+    btn.querySelector('strong').textContent = '☁ 儲存到 Google Sheets';
+    addXP(25, '備份到 Google Sheets ☁');
+  } catch(err) {
+    result.style.display  = 'block';
+    result.style.background = 'rgba(239,68,68,.10)';
+    result.style.border   = '1px solid rgba(239,68,68,.35)';
+    result.style.color    = '#f87171';
+    result.innerHTML = `❌ 儲存失敗：${err.message}`;
+    btn.querySelector('strong').textContent = '☁ 儲存到 Google Sheets';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── 收集所有列資料（供兩個匯出共用）──
