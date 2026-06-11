@@ -716,7 +716,7 @@
 <header>
   <div class="logo">📦</div>
   <div>
-    <h1><span class="title-glow">Packing List</span> 製作工具 <span style="font-size:10px;font-weight:600;color:var(--text-muted);background:var(--surface2);border:1px solid var(--border2);padding:2px 8px;border-radius:10px;margin-left:6px;" id="versionTag">v2.1</span></h1>
+    <h1><span class="title-glow">Packing List</span> 製作工具 <span style="font-size:10px;font-weight:600;color:var(--text-muted);background:var(--surface2);border:1px solid var(--border2);padding:2px 8px;border-radius:10px;margin-left:6px;" id="versionTag">v2.2</span></h1>
     <div class="subtitle">🚀 倉儲作業平台 ／ 匯入ERP明細 → 比對中英標 → 產出裝箱單</div>
   </div>
   <div class="xp-bar-wrap">
@@ -725,6 +725,7 @@
     <span class="xp-pts" id="xpPts">0 pts</span>
   </div>
   <div class="hactions">
+    <button class="btn btn-secondary" onclick="openRestoreModal()" style="border-color:rgba(52,211,153,.4);color:#34d399;">📂 載入歷史紀錄</button>
     <button class="btn btn-danger" onclick="clearAll()">🗑 清除重置</button>
   </div>
 </header>
@@ -949,6 +950,45 @@
       <div style="display:flex;gap:8px;">
         <button class="btn btn-primary" onclick="applyPltWtFill()">✓ 套用</button>
         <button class="btn btn-secondary" onclick="document.getElementById('dimPltWtModal').classList.remove('show')">✕ 取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 載入歷史紀錄 Modal -->
+  <div class="modal-overlay" id="restoreModal">
+    <div class="modal-box" style="width:560px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+        <span style="font-size:28px;">📂</span>
+        <h3 style="margin:0;">載入歷史紀錄</h3>
+      </div>
+      <p>從 Google Sheets「出貨紀錄」頁籤，複製該筆紀錄的<b>「明細JSON」欄位</b>內容，貼到下方：</p>
+
+      <!-- 步驟說明 -->
+      <div style="background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:11.5px;color:var(--text-muted);line-height:1.8;">
+        <b style="color:var(--text);">操作步驟：</b><br>
+        1. 開啟 Google Sheets「出貨紀錄」頁籤<br>
+        2. 找到要還原的那一行，點 <b>L欄（明細JSON）</b>的儲存格<br>
+        3. 全選（Ctrl+A）→ 複製（Ctrl+C）<br>
+        4. 回到這裡貼上（Ctrl+V）→ 按「還原」
+      </div>
+
+      <!-- 匯出設定還原選項 -->
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <input type="checkbox" id="restoreSettings" checked style="width:15px;height:15px;accent-color:var(--accent);">
+        <label for="restoreSettings" style="font-size:12px;color:var(--text-muted);cursor:pointer;">同時還原匯出設定（Invoice No.、港口、船名等）</label>
+      </div>
+
+      <textarea id="restoreJson"
+        placeholder='貼上明細JSON，格式如：[{"pltNo":"P1","boxNo":"V1","partNo":"ME007...}]'
+        style="width:100%;height:140px;background:var(--surface2);border:1px solid var(--border2);
+               border-radius:8px;padding:10px;font-size:11.5px;font-family:var(--font-mono);
+               color:var(--text);resize:vertical;line-height:1.5;"></textarea>
+
+      <div id="restoreError" style="display:none;margin-top:8px;padding:8px 12px;background:var(--err-bg);border:1px solid var(--err-border);border-radius:6px;font-size:12px;color:var(--err-text);"></div>
+
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button class="btn btn-success" onclick="applyRestore()">✓ 還原</button>
+        <button class="btn btn-secondary" onclick="closeRestoreModal()">✕ 取消</button>
       </div>
     </div>
   </div>
@@ -2114,6 +2154,141 @@ function applyPltDimFill() {
   toast('✓ 材積/板已套用至同 PLT NO 的合併儲存格');
 }
 
+// ── 載入歷史紀錄（還原）──
+function openRestoreModal() {
+  $('restoreJson').value = '';
+  $('restoreError').style.display = 'none';
+  $('restoreModal').classList.add('show');
+  setTimeout(() => $('restoreJson').focus(), 200);
+}
+
+function closeRestoreModal() {
+  $('restoreModal').classList.remove('show');
+}
+
+function applyRestore() {
+  const raw = $('restoreJson').value.trim();
+  const errEl = $('restoreError');
+  errEl.style.display = 'none';
+
+  if (!raw) {
+    errEl.textContent = '請先貼上明細 JSON 內容。';
+    errEl.style.display = 'block'; return;
+  }
+
+  let rows;
+  try {
+    rows = JSON.parse(raw);
+    if (!Array.isArray(rows) || rows.length === 0) throw new Error('格式不正確');
+  } catch(e) {
+    errEl.textContent = '❌ JSON 格式有誤，請確認複製的是「明細JSON」欄位的完整內容。';
+    errEl.style.display = 'block'; return;
+  }
+
+  // 確認是否有 ERP 資料（需要至少有 partNo 資訊才能還原）
+  // 直接從 JSON 重建 erpItems（若目前 erpItems 是空的）
+  if (!erpItems.length) {
+    erpItems = rows.map((r, i) => ({
+      seq:    i + 1,
+      partNo: r.partNo  || '',
+      nameCN: r.nameCN  || '',
+      spec:   r.spec    || '',
+      qty:    r.qty     || 0,
+      unit:   r.unit    || ''
+    }));
+    orderInfo = {};
+    setStatus('excelStatus', 'ok', `⚡ 從歷史紀錄還原（${erpItems.length} 筆）`);
+  }
+
+  // 還原匯出設定
+  if ($('restoreSettings').checked && rows[0] && rows[0]._settings) {
+    const s = rows[0]._settings;
+    const fields = ['fInvNo','fConsigneeName','fConsigneeA1','fConsigneeA2','fConsigneeA3',
+                    'fTel','fAttn','fFrom','fShipper','fPOL','fPOD','fVessel','fETD'];
+    fields.forEach(id => { if (s[id] && $(id)) $(id).value = s[id]; });
+  }
+
+  // 重建表格
+  const tbody = $('tableBody');
+  tbody.innerHTML = ''; tableRows = [];
+  pltColorMap = {}; pltColorIdx = 0;
+
+  rows.forEach((r, idx) => {
+    const item = {
+      seq: idx + 1, partNo: r.partNo || '', nameCN: r.nameCN || '',
+      spec: r.spec || '', qty: r.qty || 0, unit: r.unit || ''
+    };
+    appendItemRow(tbody, item, idx, false);
+    const row = tableRows[tableRows.length - 1];
+
+    // 回填各欄位
+    if (r.pltNo)    row.cnInput.value = r.pltNo;
+    if (r.boxNo)    row.boxInput.value = r.boxNo;
+    if (r.serialNo) row.serialTd.textContent = r.serialNo;
+    row.qtyTd.textContent = String(r.qty || '');
+
+    // 英文品名 / 淨重 / 毛重 / 材積
+    const setCell = (cell, val) => {
+      if (!val) return;
+      cell.textContent = val;
+      cell.classList.remove('cell-nodata','cell-empty');
+      cell.setAttribute('data-status','ok');
+    };
+    setCell(row.enCell,    r.enName  || r.enName);
+    setCell(row.netCell,   r.netWt);
+    setCell(row.grossCell, r.grossWt);
+    setCell(row.volCell,   r.dim);
+
+    // 棧板重
+    if (r.pltWeight && r.pltWeight > 0) {
+      row.pltWeightTd.textContent = r.pltWeight;
+    }
+
+    // 手動毛重
+    if (r.totalGross && r.totalGross > 0) {
+      row.totalGross.textContent = r.totalGross.toFixed(3);
+      row.totalGross._manualEdit = true;
+      row.totalGross.className = 'col-num col-total';
+    }
+
+    // 觸發重算
+    const calc = () => {
+      const n = parseFloat(r.netWt), q = parseFloat(r.qty) || 0;
+      row.totalNet.textContent = (!isNaN(n) && q) ? (n*q).toFixed(3) : '—';
+      row.totalNet.className = (!isNaN(n) && q) ? 'col-num col-total' : 'col-num col-total-empty';
+    };
+    calc();
+  });
+
+  // 還原材積/板 override
+  const pltDimMap = {};
+  rows.forEach(r => {
+    if (r.pltNo && r.pltDim && r.pltDim !== '—') pltDimMap[r.pltNo] = r.pltDim;
+  });
+  if (Object.keys(pltDimMap).length) {
+    window._pltDimOverride = Object.assign(window._pltDimOverride || {}, pltDimMap);
+  }
+
+  // 顯示相關區塊
+  $('infoBar').style.display     = 'flex';
+  $('legend').style.display      = 'flex';
+  $('exportSection').style.display = 'block';
+  $('exportBtn').disabled = false;
+  $('infoOrderNo').textContent = orderInfo.orderNo || '—';
+  $('infoDate').textContent    = orderInfo.date    || '—';
+  $('infoNote').textContent    = orderInfo.note    || '—';
+  $('infoCount').textContent   = erpItems.length;
+
+  updateTableCount();
+  recalcPltGross();
+  recalcPltDim();
+  updateQtyCheck();
+
+  closeRestoreModal();
+  toast(`✅ 已還原 ${rows.length} 筆歷史紀錄`, 'ok');
+  addXP(15, '歷史紀錄還原成功');
+}
+
 // ── Google Sheets 備份 ──
 const GS_URL   = 'https://script.google.com/macros/s/AKfycbwphKG9qZQbzbgeLmEHNcgoFmxtmBaGIP8s0l4YZZxDsqOYvOfPlmLuR7Eyl5HUjWpY/exec';
 const GS_TOKEN = 'PL-Brown0516-xK9mQw3nZ7';
@@ -2145,18 +2320,36 @@ async function saveToGoogleSheets() {
     totalQty:   totalQty,
     totalNet:   parseFloat(totalNet.toFixed(3)),
     totalGross: parseFloat(totalGross.toFixed(3)),
-    rows:       rows.map(r => ({
+    rows:       rows.map((r, idx) => ({
+      ...(idx === 0 ? { _settings: {
+        fInvNo:          $('fInvNo')          ? $('fInvNo').value          : '',
+        fConsigneeName:  $('fConsigneeName')  ? $('fConsigneeName').value  : '',
+        fConsigneeA1:    $('fConsigneeA1')    ? $('fConsigneeA1').value    : '',
+        fConsigneeA2:    $('fConsigneeA2')    ? $('fConsigneeA2').value    : '',
+        fConsigneeA3:    $('fConsigneeA3')    ? $('fConsigneeA3').value    : '',
+        fTel:            $('fTel')            ? $('fTel').value            : '',
+        fAttn:           $('fAttn')           ? $('fAttn').value           : '',
+        fFrom:           $('fFrom')           ? $('fFrom').value           : '',
+        fShipper:        $('fShipper')        ? $('fShipper').value        : '',
+        fPOL:            $('fPOL')            ? $('fPOL').value            : '',
+        fPOD:            $('fPOD')            ? $('fPOD').value            : '',
+        fVessel:         $('fVessel')         ? $('fVessel').value         : '',
+        fETD:            $('fETD')            ? $('fETD').value            : '',
+      }} : {}),
       pltNo:   r.pltNo,
       boxNo:   r.boxNo,
       partNo:  r.partNo,
       nameCN:  r.nameCN,
       enName:  r.enName,
+      spec:    r.spec,
       serialNo:r.serialNo,
       qty:     r.qty,
       unit:    r.unit,
       netWt:   r.netWt,
       grossWt: r.grossWt,
       dim:     r.dim,
+      pltDim:  r.pltDim,
+      pltWeight:  r.pltWeight,
       totalNet:   r.totalNet,
       totalGross: r.totalGross,
       pltGross:   r.pltGross,
